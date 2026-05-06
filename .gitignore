@@ -1,0 +1,10 @@
+# Javascript
+
+node_modules/
+yarn-error.log*
+dist/
+.cache/
+build/
+.env
+*.swo
+.env.local
