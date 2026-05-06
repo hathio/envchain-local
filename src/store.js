@@ -1,28 +1,31 @@
+'use strict';
+
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const STORE_DIR = path.join(os.homedir(), '.envchain-local');
-const STORE_FILE = path.join(STORE_DIR, 'secrets.json');
+const STORE_PATH = process.env.ENVCHAIN_STORE_PATH ||
+  path.join(os.homedir(), '.envchain-local', 'store.json');
 
 function ensureStoreExists() {
-  if (!fs.existsSync(STORE_DIR)) {
-    fs.mkdirSync(STORE_DIR, { recursive: true, mode: 0o700 });
+  const dir = path.dirname(STORE_PATH);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
   }
-  if (!fs.existsSync(STORE_FILE)) {
-    fs.writeFileSync(STORE_FILE, JSON.stringify({}), { mode: 0o600 });
+  if (!fs.existsSync(STORE_PATH)) {
+    fs.writeFileSync(STORE_PATH, JSON.stringify({}), 'utf8');
   }
 }
 
 function readStore() {
   ensureStoreExists();
-  const raw = fs.readFileSync(STORE_FILE, 'utf8');
+  const raw = fs.readFileSync(STORE_PATH, 'utf8');
   return JSON.parse(raw);
 }
 
 function writeStore(data) {
   ensureStoreExists();
-  fs.writeFileSync(STORE_FILE, JSON.stringify(data, null, 2), { mode: 0o600 });
+  fs.writeFileSync(STORE_PATH, JSON.stringify(data, null, 2), 'utf8');
 }
 
 function normalizeProjectKey(projectPath) {
@@ -46,11 +49,13 @@ function setSecret(projectPath, name, value) {
 function deleteSecret(projectPath, name) {
   const store = readStore();
   const key = normalizeProjectKey(projectPath);
-  if (!store[key] || !(name in store[key])) return false;
-  delete store[key][name];
-  if (Object.keys(store[key]).length === 0) delete store[key];
-  writeStore(store);
-  return true;
+  if (store[key]) {
+    delete store[key][name];
+    if (Object.keys(store[key]).length === 0) {
+      delete store[key];
+    }
+    writeStore(store);
+  }
 }
 
 function listProjects() {
@@ -58,4 +63,13 @@ function listProjects() {
   return Object.keys(store);
 }
 
-module.exports = { getSecrets, setSecret, deleteSecret, listProjects, STORE_FILE };
+module.exports = {
+  ensureStoreExists,
+  readStore,
+  writeStore,
+  normalizeProjectKey,
+  getSecrets,
+  setSecret,
+  deleteSecret,
+  listProjects,
+};
