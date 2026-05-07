@@ -1,46 +1,63 @@
-import { getSecrets } from './store.js';
-import { parseDotenv, parseJson } from './import.js';
-import { readFileSync } from 'fs';
-import { extname } from 'path';
+import fs from 'fs';
+import path from 'path';
 
 /**
- * Compare stored secrets for a project against a file or object.
- * Returns { added, removed, changed, unchanged } keys.
+ * Compare two flat secret objects and return a list of differences.
+ * @param {Record<string,string>} base
+ * @param {Record<string,string>} target
+ * @returns {Array<{type: 'added'|'removed'|'changed', key: string, oldValue?: string, newValue?: string}>}
  */
-export function diffSecrets(stored, incoming) {
-  const storedKeys = new Set(Object.keys(stored));
-  const incomingKeys = new Set(Object.keys(incoming));
+export function diffSecrets(base, target) {
+  const diff = [];
+  const allKeys = new Set([...Object.keys(base), ...Object.keys(target)]);
 
-  const added = [...incomingKeys].filter(k => !storedKeys.has(k));
-  const removed = [...storedKeys].filter(k => !incomingKeys.has(k));
-  const changed = [...incomingKeys].filter(
-    k => storedKeys.has(k) && stored[k] !== incoming[k]
-  );
-  const unchanged = [...incomingKeys].filter(
-    k => storedKeys.has(k) && stored[k] === incoming[k]
-  );
+  for (const key of allKeys) {
+    const inBase = Object.prototype.hasOwnProperty.call(base, key);
+    const inTarget = Object.prototype.hasOwnProperty.call(target, key);
 
-  return { added, removed, changed, unchanged };
+    if (inBase && !inTarget) {
+      diff.push({ type: 'removed', key, oldValue: base[key] });
+    } else if (!inBase && inTarget) {
+      diff.push({ type: 'added', key, newValue: target[key] });
+    } else if (base[key] !== target[key]) {
+      diff.push({ type: 'changed', key, oldValue: base[key], newValue: target[key] });
+    }
+  }
+
+  return diff.sort((a, b) => a.key.localeCompare(b.key));
 }
 
 /**
- * Load secrets from a file based on its extension (.env or .json).
+ * Load secrets from a .env or .json file into a flat object.
+ * @param {string} filePath
+ * @returns {Record<string,string>}
  */
 export function loadSecretsFromFile(filePath) {
-  const raw = readFileSync(filePath, 'utf-8');
-  const ext = extname(filePath).toLowerCase();
-  if (ext === '.json') {
-    return parseJson(raw);
+  const abs = path.resolve(filePath);
+  if (!fs.existsSync(abs)) {
+    throw new Error(`File not found: ${abs}`);
   }
-  // default: treat as dotenv
-  return parseDotenv(raw);
-}
 
-/**
- * High-level diff: compare a project's stored secrets against a file.
- */
-export async function diffProjectAgainstFile(project, filePath, passphrase) {
-  const stored = await getSecrets(project, passphrase);
-  const incoming = loadSecretsFromFile(filePath);
-  return diffSecrets(stored, incoming);
+  const content = fs.readFileSync(abs, 'utf8');
+  const ext = path.extname(abs).toLowerCase();
+
+  if (ext === '.json') {
+    const parsed = JSON.parse(content);
+    return Object.fromEntries(
+      Object.entries(parsed).map(([k, v]) => [k, String(v)])
+    );
+  }
+
+  // Default: parse as .env
+  const result = {};
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx === -1) continue;
+    const key = trimmed.slice(0, eqIdx).trim();
+    const value = trimmed.slice(eqIdx + 1).trim().replace(/^["']|["']$/g, '');
+    result[key] = value;
+  }
+  return result;
 }
